@@ -40,37 +40,48 @@ let jsMatch = jsHtml.match(/<script>([\s\S]*?)<\/script>/i);
 let extractedJs = jsMatch ? jsMatch[1].trim() : '';
 
 const apiProxy = `
-window.google = { script: { run: new Proxy({}, {
-  get: (target, prop) => (...args) => {
-    let s = null, f = null;
-    const chain = {
-       withSuccessHandler: h => { s = h; return chain; },
-       withFailureHandler: h => { f = h; return chain; }
-    };
-    if (prop === 'withSuccessHandler' || prop === 'withFailureHandler') return chain[prop](args[0]);
-    
-    console.log('[API PROXY] Calling API Route:', prop, args);
-    
-    fetch('/api/gas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ func: prop, args })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) {
-        console.error('[API PROXY ERROR]', data.error);
-        if (f) f(new Error(data.error));
-      } else {
-        if (s) s(data.result);
+window.google = { script: { run: new Proxy(
+  { s: null, f: null },
+  {
+    get: (state, prop) => {
+      if (prop === 'withSuccessHandler') {
+        return (h) => { state.s = h; return window.google.script.run; };
       }
-    })
-    .catch(err => {
-      console.error('[API PROXY NETWORK ERROR]', err);
-      if (f) f(err);
-    });
+      if (prop === 'withFailureHandler') {
+        return (h) => { state.f = h; return window.google.script.run; };
+      }
+      
+      return (...args) => {
+        const onSuccess = state.s;
+        const onFailure = state.f;
+        // Reset state for next chained call
+        state.s = null;
+        state.f = null;
+        
+        console.log('[API PROXY] Calling API Route:', prop, args);
+        
+        fetch('/api/gas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ func: prop, args })
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) {
+            console.error('[API PROXY ERROR]', data.error);
+            if (onFailure) onFailure(new Error(data.error));
+          } else {
+            if (onSuccess) onSuccess(data.result);
+          }
+        })
+        .catch(err => {
+          console.error('[API PROXY NETWORK ERROR]', err);
+          if (onFailure) onFailure(err);
+        });
+      };
+    }
   }
-})}};
+)}};
 `;
 
 const finalJs = apiProxy + "\n" + extractedJs;
