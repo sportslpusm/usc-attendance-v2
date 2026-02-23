@@ -15,45 +15,56 @@ let extractedHtml = bodyMatch ? bodyMatch[1].trim() : '';
 let jsMatch = jsHtml.match(/<script>([\s\S]*?)<\/script>/i);
 let extractedJs = jsMatch ? jsMatch[1].trim() : '';
 
-const mockObject = `
+const apiProxy = `
 window.google = { script: { run: new Proxy({}, {
   get: (target, prop) => (...args) => {
-    console.log('[MOCK GAS]', prop, args);
     let s = null, f = null;
     const chain = {
        withSuccessHandler: h => { s = h; return chain; },
        withFailureHandler: h => { f = h; return chain; }
     };
     if (prop === 'withSuccessHandler' || prop === 'withFailureHandler') return chain[prop](args[0]);
-    setTimeout(() => {
-       let res = { success: true };
-       if(prop === 'getActiveEvents') res = [{name:'Mock Event', eventCode:'EVT123'}];
-       if(prop === 'getPublicVolunteerProfile') res = {success: true, name: 'Student Vol', regNo: args[0], totalHours: 12, totalEvents: 3, totalDays: 4, joinedDate: '2024-01-01', rank: 5};
-       if(prop === 'getPublicLeaderboard') res = {success: true, leaders: [{name: 'Lebron', regNo:'12345678', rank:1, totalHours:100}]};
-       if(prop === 'getAdminSession') res = {success: true, eventName: '__ADMIN_ONLY__'};
-       
-       if(s) s(res);
-    }, 500);
+    
+    console.log('[API PROXY] Calling API Route:', prop, args);
+    
+    fetch('/api/gas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ func: prop, args })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        console.error('[API PROXY ERROR]', data.error);
+        if (f) f(new Error(data.error));
+      } else {
+        if (s) s(data.result);
+      }
+    })
+    .catch(err => {
+      console.error('[API PROXY NETWORK ERROR]', err);
+      if (f) f(err);
+    });
   }
 })}};
 `;
 
-const finalJs = mockObject + "\n" + extractedJs;
+const finalJs = apiProxy + "\n" + extractedJs;
 
 const tsxContent = [
-    '"use client";',
-    'import { useEffect, useRef } from "react";',
-    'import Script from "next/script";',
-    '',
-    'export default function Home() {',
-    '  return (',
-    '    <>',
-    '      <div dangerouslySetInnerHTML={{ __html: ' + JSON.stringify(extractedHtml) + ' }} />',
-    '      <Script id="legacy-logic" strategy="lazyOnload" dangerouslySetInnerHTML={{ __html: ' + JSON.stringify(finalJs) + ' }} />',
-    '    </>',
-    '  );',
-    '}'
+  '"use client";',
+  'import { useEffect, useRef } from "react";',
+  'import Script from "next/script";',
+  '',
+  'export default function Home() {',
+  '  return (',
+  '    <>',
+  '      <div dangerouslySetInnerHTML={{ __html: ' + JSON.stringify(extractedHtml) + ' }} />',
+  '      <Script id="legacy-logic" strategy="lazyOnload" dangerouslySetInnerHTML={{ __html: ' + JSON.stringify(finalJs) + ' }} />',
+  '    </>',
+  '  );',
+  '}'
 ].join('\n');
 
 fs.writeFileSync(targetPage, tsxContent);
-console.log("Migration perfect!");
+console.log("Migration API Proxy connected perfectly!");
